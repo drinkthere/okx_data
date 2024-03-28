@@ -25,6 +25,7 @@ func getSymbolVolatilityHandler() http.HandlerFunc {
 		volatility, ok := symbolVolatilities.GetVolatility(symbol)
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
+			logger.Info("can not find %s volatility", symbol)
 			return
 		}
 

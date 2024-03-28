@@ -45,25 +45,19 @@ func (cli *OkxClient) SetPriceHandler(handler PriceProcessHandler, errHandler Er
 }
 
 func (cli *OkxClient) StartWS() bool {
-	resultChan := make(chan bool)
-	subChan := make(chan *events.Subscribe)
+	return cli.wSConnectNSubscribe()
+}
+
+func (cli *OkxClient) wSConnectNSubscribe() bool {
 	errChan := make(chan *events.Error)
+	subChan := make(chan *events.Subscribe)
+	uSubChan := make(chan *events.Unsubscribe)
+	lCh := make(chan *events.Login)
+	succChan := make(chan *events.Success)
+
 	tickerCh := make(chan *public.Tickers)
-
+	cli.client.Ws.SetChannels(errChan, subChan, uSubChan, lCh, succChan)
 	go func() {
-		for _, symbol := range cli.symbols {
-			// 启动 futures的bookTicker
-			err := cli.client.Ws.Public.Tickers(ws_public_requests.Tickers{
-				InstID: symbol,
-			}, tickerCh)
-
-			if err != nil {
-				logger.Fatal(err.Error())
-			}
-			logger.Info("okx futures bookTicker WS is established, symbol:%s", symbol)
-			time.Sleep(50 * time.Millisecond)
-		}
-
 		for {
 			select {
 			case sub := <-subChan:
@@ -74,18 +68,35 @@ func (cli *OkxClient) StartWS() bool {
 				for _, datum := range err.Data {
 					logger.Warn("[Error]\t\t%+v", datum)
 				}
+				time.Sleep(3 * time.Second) // 休眠1秒，重新连接
+				cli.wSConnectNSubscribe()
+
 			case i := <-tickerCh:
 				cli.bookTickerMsgHandler(i.Tickers)
+
 			case b := <-cli.client.Ws.DoneChan:
 				logger.Info("[End]:\t%v", b)
 			}
 		}
 	}()
+	// 启动 WebSocket 订阅
+	result := true
+	for _, symbol := range cli.symbols {
+		go func(sym string) {
+			// 启动 futures 的 bookTicker
+			err := cli.client.Ws.Public.Tickers(ws_public_requests.Tickers{
+				InstID: sym,
+			}, tickerCh)
 
-	go func() {
-		resultChan <- true
-	}()
-	return <-resultChan
+			if err != nil {
+				logger.Fatal(err.Error())
+				result = false
+				return
+			}
+			logger.Info("okx futures bookTicker WS is established, symbol:%s", sym)
+		}(symbol)
+	}
+	return result
 }
 
 func (cli *OkxClient) StopWS() bool {
